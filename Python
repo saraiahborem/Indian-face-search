@@ -1,0 +1,89 @@
+# app.py (Backend)
+from flask import Flask, request, jsonify
+import cv2
+import numpy as np
+from deepface import DeepFace
+
+app = Flask(__name__)
+
+# Temporary storage for demo (replace with a database)
+face_db = []
+
+@app.route('/detect', methods=['POST'])
+def detect_face():
+    # Read image from request
+    file = request.files['image']
+    img = cv2.imdecode(np.frombuffer(file.read(), np.uint8), cv2.IMREAD_COLOR)
+    
+    # Detect faces and generate embeddings
+    try:
+        detected_face = DeepFace.detectFace(img, detector_backend='opencv')
+        embedding = DeepFace.represent(img, model_name='Facenet')[0]["embedding"]
+        
+        # Store embedding (hash this in production)
+        face_db.append(embedding)
+        return jsonify({"status": "success", "embedding": embedding})
+    
+    except:
+        return jsonify({"status": "no face detected"})
+
+@app.route('/search', methods=['POST'])
+def search_face():
+    query_embedding = request.json['embedding']
+    matches = []
+    
+    # Compare with stored embeddings (demo: Euclidean distance)
+    for idx, emb in enumerate(face_db):
+        distance = np.linalg.norm(np.array(emb) - np.array(query_embedding))
+        if distance < 0.6:  # Threshold for similarity
+            matches.append({"id": idx, "confidence": 1 - distance})
+    
+    return jsonify({"matches": matches})
+
+if __name__ == '__main__':
+    app.run(debug=True)
+// FaceSearch.js (Frontend)
+import React, { useState } from 'react';
+import axios from 'axios';
+
+function FaceSearch() {
+  const [results, setResults] = useState([]);
+  const [preview, setPreview] = useState('');
+
+  const handleUpload = async (e) => {
+    const file = e.target.files[0];
+    const formData = new FormData();
+    formData.append('image', file);
+
+    // Step 1: Detect face and get embedding
+    try {
+      const detectRes = await axios.post('http://localhost:5000/detect', formData);
+      const embedding = detectRes.data.embedding;
+
+      // Step 2: Search for matches
+      const searchRes = await axios.post('http://localhost:5000/search', { embedding });
+      setResults(searchRes.data.matches);
+      
+      // Preview image
+      const reader = new FileReader();
+      reader.onload = (e) => setPreview(e.target.result);
+      reader.readAsDataURL(file);
+    } catch (err) {
+      alert('No face detected or API error.');
+    }
+  };
+
+  return (
+    <div>
+      <input type="file" accept="image/*" onChange={handleUpload} />
+      {preview && <img src={preview} alt="Preview" width="200" />}
+      <div>
+        {results.map((match) => (
+          <div key={match.id}>Match #{match.id} (Confidence: {match.confidence.toFixed(2)})</div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export default FaceSearch;
